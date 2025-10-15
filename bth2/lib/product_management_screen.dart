@@ -1,412 +1,383 @@
-// lib/product_management_screen.dart
-import 'package:flutter/material.dart';
 import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:image_picker/image_picker.dart'; // Thêm vào pubspec.yaml: image_picker: ^1.0.4
-// Lưu ý: Chạy 'flutter pub get' sau khi thêm package. Để mock nếu chưa, comment phần pick.
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
 
 class Product {
-  final String id;
-  final String name;
-  final double price;
-  final String description;
-  final List<String> imagePaths; // Đường dẫn ảnh lưu local
-  final String category;
-  final bool hasDiscount;
-  final DateTime? discountTime;
+  String name;
+  double price;
+  String description;
+  List<String> imagePaths;
+  String category;
+  bool hasDiscount;
+  DateTime? discountTime;
 
   Product({
-    required this.id,
     required this.name,
     required this.price,
     required this.description,
     required this.imagePaths,
     required this.category,
-    this.hasDiscount = false,
+    required this.hasDiscount,
     this.discountTime,
   });
 
-  // To Map for storage (mock)
-  Map<String, dynamic> toMap() {
-    return {
-      'id': id,
-      'name': name,
-      'price': price,
-      'description': description,
-      'imagePaths': imagePaths,
-      'category': category,
-      'hasDiscount': hasDiscount,
-      'discountTime': discountTime?.toIso8601String(),
-    };
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'price': price,
+        'description': description,
+        'imagePaths': imagePaths,
+        'category': category,
+        'hasDiscount': hasDiscount,
+        'discountTime': discountTime?.toIso8601String(),
+      };
+
+  static Product fromJson(Map<String, dynamic> json) => Product(
+        name: json['name'],
+        price: json['price'],
+        description: json['description'],
+        imagePaths: List<String>.from(json['imagePaths']),
+        category: json['category'],
+        hasDiscount: json['hasDiscount'],
+        discountTime: json['discountTime'] != null
+            ? DateTime.parse(json['discountTime'])
+            : null,
+      );
+}
+
+class ProductManagementScreen extends StatefulWidget {
+  const ProductManagementScreen({super.key});
+
+  @override
+  State<ProductManagementScreen> createState() => _ProductManagementScreenState();
+}
+
+class _ProductManagementScreenState extends State<ProductManagementScreen> {
+  List<Product> products = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProducts();
   }
 
-  // From Map
-  factory Product.fromMap(Map<String, dynamic> map) {
-    return Product(
-      id: map['id'],
-      name: map['name'],
-      price: map['price'].toDouble(),
-      description: map['description'],
-      imagePaths: List<String>.from(map['imagePaths']),
-      category: map['category'],
-      hasDiscount: map['hasDiscount'],
-      discountTime: map['discountTime'] != null ? DateTime.parse(map['discountTime']) : null,
+  Future<void> _loadProducts() async {
+    final prefs = await SharedPreferences.getInstance();
+    final data = prefs.getString('products');
+    if (data != null) {
+      final list = json.decode(data) as List;
+      setState(() {
+        products = list.map((e) => Product.fromJson(e)).toList();
+      });
+    }
+  }
+
+  Future<void> _saveProducts() async {
+    final prefs = await SharedPreferences.getInstance();
+    final data = json.encode(products.map((e) => e.toJson()).toList());
+    await prefs.setString('products', data);
+  }
+
+  void _addOrEditProduct([Product? product, int? index]) async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AddEditProductScreen(product: product),
+      ),
     );
+    if (result is Product) {
+      setState(() {
+        if (index != null) {
+          products[index] = result;
+        } else {
+          products.add(result);
+        }
+      });
+      await _saveProducts();
+    }
   }
-}
 
-// Static list for mock local storage (thực tế: dùng shared_preferences + json hoặc sqflite)
-class ProductStorage {
-  static List<Product> products = [];
-  static String generateId() => DateTime.now().millisecondsSinceEpoch.toString();
-}
-
-class ProductListPage extends StatefulWidget {
-  const ProductListPage({super.key});
-
-  @override
-  State<ProductListPage> createState() => _ProductListPageState();
-}
-
-class _ProductListPageState extends State<ProductListPage> {
-  @override
-  Widget build(BuildContext context) {
-    final products = ProductStorage.products;
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Danh sách sản phẩm'),
-        backgroundColor: Colors.blueAccent,
+  void _viewProduct(Product product) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(product.name),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (product.imagePaths.isNotEmpty)
+              SizedBox(
+                height: 80,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  children: product.imagePaths
+                      .map((path) => Padding(
+                            padding: const EdgeInsets.all(4),
+                            child: Image.file(File(path), width: 60, height: 60, fit: BoxFit.cover),
+                          ))
+                      .toList(),
+                ),
+              ),
+            Text('Price: ${product.price}'),
+            Text('Category: ${product.category}'),
+            Text('Description: ${product.description}'),
+            if (product.hasDiscount && product.discountTime != null)
+              Text('Discount until: ${product.discountTime!.toLocal()}'),
+          ],
+        ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: () => _navigateToAddEdit(null),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
           ),
         ],
       ),
-      body: products.isEmpty
-          ? const Center(child: Text('Chưa có sản phẩm nào'))
-          : ListView.builder(
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Product List'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.add),
+            onPressed: () => _addOrEditProduct(),
+          ),
+        ],
+      ),
+      body: ListView.builder(
         itemCount: products.length,
         itemBuilder: (context, index) {
           final product = products[index];
-          return Card(
-            margin: const EdgeInsets.all(8),
-            child: ListTile(
-              leading: product.imagePaths.isNotEmpty
-                  ? Image.file(
-                File(product.imagePaths.first),
-                width: 50,
-                height: 50,
-                fit: BoxFit.cover,
-              )
-                  : const Icon(Icons.image, size: 50),
-              title: Text(product.name),
-              subtitle: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Giá: ${product.price} VND'),
-                  Text('Danh mục: ${product.category}'),
-                ],
-              ),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.edit),
-                    onPressed: () => _navigateToAddEdit(product),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.delete, color: Colors.red),
-                    onPressed: () {
-                      setState(() {
-                        ProductStorage.products.removeAt(index);
-                      });
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Đã xóa sản phẩm')),
-                      );
-                    },
-                  ),
-                ],
-              ),
-              onTap: () => _showProductDetails(product),
+          return ListTile(
+            leading: product.imagePaths.isNotEmpty
+                ? Image.file(File(product.imagePaths.first), width: 50, height: 50, fit: BoxFit.cover)
+                : const Icon(Icons.image),
+            title: Text(product.name),
+            subtitle: Text('Price: ${product.price}\nCategory: ${product.category}'),
+            onTap: () => _viewProduct(product),
+            trailing: IconButton(
+              icon: const Icon(Icons.edit),
+              onPressed: () => _addOrEditProduct(product, index),
             ),
           );
         },
       ),
     );
   }
-
-  void _navigateToAddEdit(Product? product) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ProductAddEditPage(product: product),
-      ),
-    ).then((_) => setState(() {})); // Refresh list sau khi lưu
-  }
-
-  void _showProductDetails(Product product) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(product.name),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Giá: ${product.price} VND'),
-              Text('Mô tả: ${product.description}'),
-              Text('Danh mục: ${product.category}'),
-              if (product.hasDiscount) ...[
-                Text('Ưu đãi: Có'),
-                Text('Thời gian: ${product.discountTime?.toLocal().toString()}'),
-              ],
-              if (product.imagePaths.isNotEmpty) ...[
-                const Text('Hình ảnh:'),
-                SizedBox(
-                  height: 100,
-                  child: ListView.builder(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: product.imagePaths.length,
-                    itemBuilder: (context, i) => Padding(
-                      padding: const EdgeInsets.all(4),
-                      child: Image.file(File(product.imagePaths[i]), height: 100, fit: BoxFit.cover),
-                    ),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Đóng')),
-        ],
-      ),
-    );
-  }
 }
 
-class ProductAddEditPage extends StatefulWidget {
+class AddEditProductScreen extends StatefulWidget {
   final Product? product;
-
-  const ProductAddEditPage({super.key, this.product});
+  const AddEditProductScreen({super.key, this.product});
 
   @override
-  State<ProductAddEditPage> createState() => _ProductAddEditPageState();
+  State<AddEditProductScreen> createState() => _AddEditProductScreenState();
 }
 
-class _ProductAddEditPageState extends State<ProductAddEditPage> {
+class _AddEditProductScreenState extends State<AddEditProductScreen> {
   final _formKey = GlobalKey<FormState>();
-  final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _priceController = TextEditingController();
-  final TextEditingController _descriptionController = TextEditingController();
-  final ImagePicker _picker = ImagePicker();
-
-  String? _selectedCategory = 'Điện thoại';
-  bool _hasDiscount = false;
+  final _nameController = TextEditingController();
+  final _priceController = TextEditingController();
+  final _descController = TextEditingController();
+  List<XFile> _images = [];
+  List<String> _savedImagePaths = [];
+  String? _selectedCategory;
+  bool _discountOffer = false;
   DateTime? _discountTime;
-  List<XFile> _selectedImages = [];
-  List<String> _imagePaths = [];
 
-  final List<String> _categories = ['Điện thoại', 'Laptop', 'Máy ảnh', 'Phụ kiện'];
+  final List<String> _categories = ['Electronics', 'Fashion', 'Books', 'Home'];
 
   @override
   void initState() {
     super.initState();
     if (widget.product != null) {
-      final p = widget.product!;
-      _nameController.text = p.name;
-      _priceController.text = p.price.toString();
-      _descriptionController.text = p.description;
-      _selectedCategory = p.category;
-      _hasDiscount = p.hasDiscount;
-      _discountTime = p.discountTime;
-      _imagePaths = p.imagePaths;
-      // Load images from paths if edit
+      _nameController.text = widget.product!.name;
+      _priceController.text = widget.product!.price.toString();
+      _descController.text = widget.product!.description;
+      _savedImagePaths = List<String>.from(widget.product!.imagePaths);
+      _selectedCategory = widget.product!.category;
+      _discountOffer = widget.product!.hasDiscount;
+      _discountTime = widget.product!.discountTime;
     }
   }
 
   Future<void> _pickImages() async {
-    final List<XFile>? images = await _picker.pickMultiImage();
-    if (images != null && images.isNotEmpty) {
+    final picker = ImagePicker();
+    final picked = await picker.pickMultiImage();
+    if (picked != null) {
       setState(() {
-        _selectedImages.addAll(images);
+        _images.addAll(picked);
       });
     }
   }
 
-  Future<void> _pickDateTime() async {
-    final DateTime? picked = await showDatePicker(
-      context: context,
-      initialDate: DateTime.now(),
-      firstDate: DateTime.now(),
-      lastDate: DateTime(2030),
-    );
-    if (picked != null) {
-      final TimeOfDay? time = await showTimePicker(
-        context: context,
-        initialTime: TimeOfDay.now(),
-      );
-      if (time != null) {
-        final fullDateTime = DateTime(
-          picked.year,
-          picked.month,
-          picked.day,
-          time.hour,
-          time.minute,
-        );
-        setState(() {
-          _discountTime = fullDateTime;
-        });
-      }
+  Future<void> _takePhoto() async {
+    final picker = ImagePicker();
+    final photo = await picker.pickImage(source: ImageSource.camera);
+    if (photo != null) {
+      setState(() {
+        _images.add(photo);
+      });
     }
   }
 
-  Future<void> _saveProduct() async {
-    if (!_formKey.currentState!.validate()) return;
-
-    // Lưu ảnh vào local storage
-    final directory = await getApplicationDocumentsDirectory();
-    List<String> savedPaths = [];
-    for (var image in _selectedImages) {
-      final file = File(image.path);
-      final newPath = '${directory.path}/product_${DateTime.now().millisecondsSinceEpoch}.jpg';
+  Future<List<String>> _saveImagesLocally(List<XFile> images) async {
+    final dir = await getApplicationDocumentsDirectory();
+    List<String> paths = [];
+    for (var img in images) {
+      final file = File(img.path);
+      final newPath = '${dir.path}/${DateTime.now().millisecondsSinceEpoch}_${img.name}';
       await file.copy(newPath);
-      savedPaths.add(newPath);
+      paths.add(newPath);
     }
-    _imagePaths.addAll(savedPaths);
+    return paths;
+  }
 
-    final product = Product(
-      id: widget.product?.id ?? ProductStorage.generateId(),
-      name: _nameController.text,
-      price: double.parse(_priceController.text),
-      description: _descriptionController.text,
-      imagePaths: _imagePaths,
-      category: _selectedCategory!,
-      hasDiscount: _hasDiscount,
-      discountTime: _discountTime,
+  Future<void> _pickDateTime() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime.now(),
+      firstDate: DateTime.now(),
+      lastDate: DateTime(2100),
     );
-
-    // Lưu vào mock storage
-    final index = ProductStorage.products.indexWhere((p) => p.id == product.id);
-    if (index != -1) {
-      ProductStorage.products[index] = product;
-    } else {
-      ProductStorage.products.add(product);
+    if (picked != null) {
+      setState(() {
+        _discountTime = picked;
+      });
     }
+  }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(widget.product == null ? 'Thêm sản phẩm thành công!' : 'Cập nhật thành công!')),
-    );
-
-    Navigator.pop(context);
+  void _saveProduct() async {
+    if (_formKey.currentState!.validate()) {
+      List<String> imagePaths = List<String>.from(_savedImagePaths);
+      if (_images.isNotEmpty) {
+        final saved = await _saveImagesLocally(_images);
+        imagePaths.addAll(saved);
+      }
+      final product = Product(
+        name: _nameController.text,
+        price: double.tryParse(_priceController.text) ?? 0.0,
+        description: _descController.text,
+        imagePaths: imagePaths,
+        category: _selectedCategory ?? '',
+        hasDiscount: _discountOffer,
+        discountTime: _discountOffer ? _discountTime : null,
+      );
+      Navigator.pop(context, product);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.product == null ? 'Thêm sản phẩm' : 'Chỉnh sửa sản phẩm'),
-        backgroundColor: Colors.blueAccent,
+        title: const Text('Add/Edit Product'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.save),
+            onPressed: _saveProduct,
+          ),
+        ],
       ),
       body: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(16),
         child: Form(
           key: _formKey,
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextFormField(
-                  controller: _nameController,
-                  decoration: const InputDecoration(labelText: 'Tên sản phẩm'),
-                  validator: (value) => value!.isEmpty ? 'Bắt buộc' : null,
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _priceController,
-                  decoration: const InputDecoration(labelText: 'Giá (VND)'),
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  validator: (value) {
-                    if (value!.isEmpty) return 'Bắt buộc';
-                    if (double.tryParse(value) == null) return 'Phải là số';
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _descriptionController,
-                  decoration: const InputDecoration(labelText: 'Mô tả'),
-                  maxLines: 3,
-                  validator: (value) => value!.isEmpty ? 'Bắt buộc' : null,
-                ),
-                const SizedBox(height: 16),
-                const Text('Hình ảnh sản phẩm'),
-                const SizedBox(height: 8),
-                ElevatedButton(
-                  onPressed: _pickImages,
-                  child: const Text('Chọn ảnh từ thư viện'),
-                ),
-                const SizedBox(height: 8),
-                if (_selectedImages.isNotEmpty)
-                  SizedBox(
-                    height: 100,
-                    child: GridView.builder(
-                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3),
-                      itemCount: _selectedImages.length,
-                      itemBuilder: (context, index) => Image.file(
-                        File(_selectedImages[index].path),
-                        fit: BoxFit.cover,
-                      ),
-                    ),
+          child: ListView(
+            children: [
+              TextFormField(
+                controller: _nameController,
+                decoration: const InputDecoration(labelText: 'Product Name'),
+                validator: (v) => v == null || v.isEmpty ? 'Enter product name' : null,
+              ),
+              TextFormField(
+                controller: _priceController,
+                decoration: const InputDecoration(labelText: 'Price', prefixText: '  '),
+                keyboardType: TextInputType.numberWithOptions(decimal: true),
+                validator: (v) => v == null || v.isEmpty ? 'Enter price' : null,
+              ),
+              TextFormField(
+                controller: _descController,
+                decoration: const InputDecoration(labelText: 'Description'),
+                maxLines: 3,
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.image),
+                    label: const Text('Upload Images'),
+                    onPressed: _pickImages,
                   ),
-                const SizedBox(height: 16),
-                DropdownButtonFormField<String>(
-                  value: _selectedCategory,
-                  decoration: const InputDecoration(labelText: 'Danh mục'),
-                  items: _categories.map((cat) => DropdownMenuItem(value: cat, child: Text(cat))).toList(),
-                  onChanged: (value) => setState(() => _selectedCategory = value),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    const Text('Ưu đãi:'),
-                    Switch(
-                      value: _hasDiscount,
-                      onChanged: (value) => setState(() => _hasDiscount = value),
-                    ),
-                  ],
-                ),
-                if (_hasDiscount) ...[
-                  const SizedBox(height: 8),
-                  InkWell(
-                    onTap: _pickDateTime,
-                    child: InputDecorator(
-                      decoration: const InputDecoration(labelText: 'Thời gian khuyến mãi'),
-                      child: Text(_discountTime == null ? 'Chọn ngày giờ' : _discountTime!.toLocal().toString()),
-                    ),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.camera_alt),
+                    label: const Text('Take Photo'),
+                    onPressed: _takePhoto,
                   ),
                 ],
-                const SizedBox(height: 32),
-                ElevatedButton(
-                  onPressed: _saveProduct,
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
-                  child: const Text('Lưu', style: TextStyle(color: Colors.white)),
+              ),
+              SizedBox(
+                height: 80,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  children: [
+                    ..._savedImagePaths.map((path) => Padding(
+                          padding: const EdgeInsets.all(4),
+                          child: Image.file(File(path), width: 60, height: 60, fit: BoxFit.cover),
+                        )),
+                    ..._images.map((img) => Padding(
+                          padding: const EdgeInsets.all(4),
+                          child: Image.file(File(img.path), width: 60, height: 60, fit: BoxFit.cover),
+                        )),
+                  ],
                 ),
-              ],
-            ),
+              ),
+              DropdownButtonFormField<String>(
+                decoration: const InputDecoration(labelText: 'Category'),
+                value: _selectedCategory,
+                items: _categories.map((cat) =>
+                    DropdownMenuItem(value: cat, child: Text(cat))).toList(),
+                onChanged: (val) => setState(() => _selectedCategory = val),
+                validator: (v) => v == null ? 'Select category' : null,
+              ),
+              SwitchListTile(
+                title: const Text('Discount Offer'),
+                value: _discountOffer,
+                onChanged: (val) => setState(() => _discountOffer = val),
+              ),
+              if (_discountOffer)
+                ListTile(
+                  title: Text(_discountTime == null
+                      ? 'Select Discount Time'
+                      : 'Discount Time: ${_discountTime!.toLocal()}'.split(' ')[0]),
+                  trailing: const Icon(Icons.calendar_today),
+                  onTap: _pickDateTime,
+                ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  OutlinedButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Cancel'),
+                  ),
+                  const Spacer(),
+                  ElevatedButton(
+                    onPressed: _saveProduct,
+                    child: const Text('Save Product'),
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
       ),
     );
   }
-
-  @override
-  void dispose() {
-    _nameController.dispose();
-    _priceController.dispose();
-    _descriptionController.dispose();
-    super.dispose();
-  }
 }
+
